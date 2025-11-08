@@ -25,6 +25,22 @@ let gameStarted = false;
 let gameRunning = false;
 let score = 0;
 let hitPlayed = false;
+let pipeSpawnTimer = 0; // seconds accumulator for time-based spawning (mobile)
+
+// Configuration tuned for mobile vs desktop. Units: desktop uses frame-based values, mobile uses time-based (px/sec)
+const config = isMobile ? {
+    gravity: 300,    // pixels/sec^2 applied in time update (reduced for smoother fall)
+    jump: -220,      // initial velocity (px/sec)
+    pipeSpeed: 90,   // px/sec pipe horizontal speed
+    spawnInterval: 1.6, // seconds between pipe spawns
+    pipeGapFactor: 0.45 // fraction of canvas height for gap
+} : {
+    gravity: 0.6,    // per-frame gravity (original desktop behavior)
+    jump: -10,
+    pipeSpeed: 3,    // px per frame
+    spawnInterval: null,
+    pipeGapFactor: 0.35
+};
 
 // Bird
 const bird = {
@@ -33,8 +49,8 @@ const bird = {
     width: 50,
     height: 50,
     velocity: 0,
-    gravity: isMobile ? 400 : 0.6,   // smoother gravity for mobile
-    jump: isMobile ? -250 : -10,     // slightly weaker jump for smoother arc
+    gravity: config.gravity,
+    jump: config.jump,
     rotation: 0
 };
 // wing flap state for nicer animation
@@ -44,7 +60,7 @@ bird.wingFlap = 0;
 const pipes = [];
 const pipeWidth = 80;
 let pipeGap;
-const pipeSpeed = isMobile ? 150 : 3; // slower on mobile for smoother motion
+let pipeSpeed = config.pipeSpeed; // px/sec for mobile; px/frame for desktop
 let frameCount = 0;
 
 // Ground
@@ -208,6 +224,7 @@ function updateBirdFrame() {
 }
 
 function updatePipesFrame() {
+    // desktop/frame-based spawn cadence (keep existing feel)
     if (frameCount % 100 === 0) {
         const topHeight = Math.random() * (canvas.height - pipeGap - ground.height - 100) + 50;
         pipes.push({ x: canvas.width, topHeight, scored: false });
@@ -225,7 +242,8 @@ function updatePipesFrame() {
 
 // Time-based (for mobiles)
 function updateBirdTime(deltaTime) {
-    bird.velocity += bird.gravity * deltaTime * 60; // bring to similar scale as frame-based logic
+    // gravity is in px/sec^2 and velocity in px/sec
+    bird.velocity += bird.gravity * deltaTime;
     bird.y += bird.velocity * deltaTime;
     bird.wingFlap += 8 * deltaTime;
     bird.rotation = bird.velocity < 0 ? -0.45 : Math.min(bird.velocity / 500, Math.PI / 2);
@@ -234,8 +252,10 @@ function updateBirdTime(deltaTime) {
 }
 
 function updatePipesTime(deltaTime) {
-    // fewer pipes for mobile → less frequent spawn
-    if (frameCount % 160 === 0) {  
+    // time-based spawn for mobile devices (consistent across frame rates)
+    pipeSpawnTimer += deltaTime;
+    if (pipeSpawnTimer >= config.spawnInterval) {
+        pipeSpawnTimer = 0;
         const topHeight = Math.random() * (canvas.height - pipeGap - ground.height - 100) + 50;
         pipes.push({ x: canvas.width, topHeight, scored: false });
     }
@@ -297,8 +317,12 @@ function startGame() {
 
     pipes.length = 0;
     frameCount = 0;
-    ground.y = canvas.height - 80;
-    pipeGap = Math.min(canvas.height * 0.35, 270); // wider gaps for mobile
+        ground.y = canvas.height - 80;
+        // pipe gap tuned per-device for playable mobile experience
+        pipeGap = Math.min(canvas.height * config.pipeGapFactor, isMobile ? 320 : 270);
+        // ensure pipeSpeed matches config (px/sec for mobile, px/frame for desktop)
+        pipeSpeed = config.pipeSpeed;
+        pipeSpawnTimer = 0;
     gameOverScreen.classList.remove('show');
     lastTime = 0;
     requestAnimationFrame(gameLoop);
@@ -323,16 +347,20 @@ function jump() {
     try { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); } catch (e) {}
     playJumpSound();
 }
-canvas.addEventListener('click', jump);
+// allow a tap/click to start the game (if not started) or jump (if running)
+canvas.addEventListener('click', () => { if (!gameStarted) startGame(); else jump(); });
 // on-screen tap area for mobile
 const tapZone = document.getElementById('tapZone');
 if (tapZone) {
-    tapZone.addEventListener('touchstart', e => { e.preventDefault(); jump(); }, { passive: false });
+    tapZone.addEventListener('touchstart', e => {
+        e.preventDefault();
+        if (!gameStarted) startGame(); else jump();
+    }, { passive: false });
 }
 document.addEventListener('keydown', e => {
     if (e.code === 'Space') {
         e.preventDefault();
-        jump();
+        if (!gameStarted) startGame(); else jump();
     }
 });
 
